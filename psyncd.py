@@ -1,6 +1,8 @@
 import re
 import os
 import time
+import copy
+import commands
 from threading import Thread
 from watchdog.observers import Observer
 from watchdog.events import *
@@ -14,12 +16,22 @@ class FileEventHandler(FileSystemEventHandler):
         FileSystemEventHandler.__init__(self)
 
     def on_moved(self, event):
+        global FileDeleteList
+        global FILEDELETELOCK
         if event.is_directory:
+            file_move_src = "directory#movefrom#{}".format(event.src_path)
             file_string = "directory#moveto#{}".format(event.dest_path)
         else:
+            file_move_src = "file#movefrom#{}".format(event.src_path)
             file_string = "file#moveto#{}".format(event.dest_path)
         if file_string not in FileChangeList:
             FileChangeList.append(file_string)
+        if file_move_src not in FileDeleteList:
+            while FILEDELETELOCK:
+                time.sleep(0.05)
+            FILEDELETELOCK = True
+            FileDeleteList.append(file_move_src)
+            FILEDELETELOCK = False
 
     def on_created(self, event):
         if event.is_directory:
@@ -181,6 +193,9 @@ class Psyncd:
     def sync_file_delete(self):
         """sync files deleted"""
         print "start sync file(delete)"
+        global FileDeleteList
+        global FILEDELETELOCK
+
         while True:
             # wait for file change message
             while not FileDeleteList:
@@ -194,40 +209,43 @@ class Psyncd:
                 time.sleep(1)
             # let producter wait
             FILEDELETELOCK = True
-            tmplist = FileDeleteList
-            FileDeleteList = []
+            tmplist = copy.deepcopy(FileDeleteList)
+            del FileDeleteList[:]
             FILEDELETELOCK = False
             # get absolute path
             path_list = []
             for item in tmplist:
                 # item : directory#deleted#filename
                 # filepath : /home/zkeeer/approot/backend/test
+                self.logger(item)
                 filepath = item.split("#")[2]
                 path_split_list = filepath.split("/")
                 if len(path_split_list) > 2:
                     path_split_list.pop(-1)
-                tmpresult = "/"+"/".join(path_split_list)
+                tmpresult = "/".join(path_split_list) + "/"
                 path_list.append(tmpresult)
             
             # get top path
+            path_list = list(set(path_list))
             path_list.sort(key=lambda item: len(item))
             rpath_list = path_list
             rpath_list.reverse()
             for item in path_list:
                 for item_sub in rpath_list:
-                    if item in item_sub:
+                    if item in item_sub and item != item_sub:
                         path_list.remove(item_sub)
                         rpath_list.remove(item_sub)
             # sync
             for path_item in path_list:
                 for config_item in self.module_config_list:
-                source_path = config_item.get("source", None)
-                if source_path and source_path in path_item:
-                    print("{} {}".format(time.ctime(), sync_file))
-                    self.logger("{} {}".format(time.ctime(), sync_file))
-                    rsync_command = self.make_rsync_command(sync_file, config_item)
-                    print("{} {}".format(time.ctime(), rsync_command))
-                    self.execute_command(rsync_command)
+                    source_path = config_item.get("source", None)
+                    if source_path and path_item and source_path in path_item:
+                        print("{} {}".format(time.ctime(), sync_file))
+                        self.logger("{} {}".format(time.ctime(), sync_file))
+                        sync_path = self.get_relative_path(path_item, source_path)
+                        rsync_command = self.make_rsync_command(sync_path, config_item)
+                        print("{} {}".format(time.ctime(), rsync_command))
+                        self.execute_command(rsync_command)
                     
 
     def make_rsync_command(self, file_path, configs: dict):
