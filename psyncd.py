@@ -6,7 +6,8 @@ from watchdog.observers import Observer
 from watchdog.events import *
 
 FileChangeList = []
-
+FileDeleteList = []  #lazy delete
+FILEDELETELOCK = False
 
 class FileEventHandler(FileSystemEventHandler):
     def __init__(self):
@@ -33,8 +34,12 @@ class FileEventHandler(FileSystemEventHandler):
             file_string = "directory#deleted#{0}".format(event.src_path)
         else:
             file_string = "file#deleted#{0}".format(event.src_path)
-        if file_string not in FileChangeList:
-            FileChangeList.append(file_string)
+        if file_string not in FileDeleteList:
+            while FILEDELETELOCK:
+                time.sleep(0.1)
+            FILEDELETELOCK = True
+            FileDeleteList.append(file_string)
+            FILEDELETELOCK = False
 
     def on_modified(self, event):
         if event.is_directory:
@@ -163,6 +168,68 @@ class Psyncd:
                         self.execute_command(rsync_command)
                         self.rsync_command_list.remove(rsync_command)
 
+    def is_syncing(self):
+	    """check if is rsync process running"""
+	    cm_status, cm_output = commands.getstatusoutput("ps aux|grep 'rsync'")
+		if cm_status == 0:
+		    cm_output = cm_output.split('\n')
+			for item in cm_output:
+			    if "grep rsync" not in item and "ps aux" not in item:
+				    return True
+		return False
+
+    def sync_file_delete(self):
+	    """sync files deleted"""
+        print "start sync file(delete)"
+        while True:
+		    # wait for file change message
+            while not FileDeleteList:
+                time.sleep(1)
+			# wait for producter
+            while FILEDELETELOCK:
+                time.sleep(0.1)
+			# wait for sync process
+			# sync delete files after created/modified
+			while self.is_syncing():
+			    time.sleep(1)
+			# let producter wait
+            FILEDELETELOCK = True
+            tmplist = FileDeleteList
+            FileDeleteList = []
+            FILEDELETELOCK = False
+            # get absolute path
+            path_list = []
+			for item in tmplist:
+			    # item : directory#deleted#filename
+				# filepath : /home/zkeeer/approot/backend/test
+			    filepath = item.split("#")[2]
+				path_split_list = filepath.split("/")
+				if len(path_split_list) > 2:
+				    path_split_list.pop(-1)
+				tmpresult = "/"+"/".join(path_split_list)
+				path_list.append(tmpresult)
+			
+            # get top path
+            path_list.sort(key=lambda item: len(item))
+            rpath_list = path_list
+            rpath_list.reverse()
+            for item in path_list:
+                for item_sub in rpath_list:
+                    if item in item_sub:
+                        path_list.remove(item_sub)
+                        rpath_list.remove(item_sub)
+			# sync
+            for path_item in path_list:
+			    for config_item in self.module_config_list:
+                source_path = config_item.get("source", None)
+                if source_path and source_path in path_item:
+                    print("{} {}".format(time.ctime(), sync_file))
+                    self.logger("{} {}".format(time.ctime(), sync_file))
+                    rsync_command = self.make_rsync_command(sync_file, config_item)
+                    print("{} {}".format(time.ctime(), rsync_command))
+                    self.execute_command(rsync_command)
+                    
+
     def make_rsync_command(self, file_path, configs: dict):
         """
         file_path: /home/zkeeer/approot/backend/test.py
@@ -181,11 +248,6 @@ class Psyncd:
         source = configs.get("source", None)
         target = configs.get("target", None)
         # default
-        """if source and file_path[-1] == '/':
-            tmp_result = re.findall("^{}(.*?)[^/]+/$".format(source), file_path)
-            sync_file = tmp_result[0] if tmp_result else "./"
-        elif source and file_path:
-            sync_file = file_path.replace(source, "")"""
         sync_file = file_path
         default_params = "-azR"
         # options
@@ -218,6 +280,7 @@ class Psyncd:
         watch_file_thread = Thread(target=self.watch_file_change_new)
         # sync_file_thread = Thread(target=self.sync_file)
         sync_file_thread_list = []
+		sync_file_delete_thread = Thread(target=self.sync_file_delete)
         for index in range(self.max_process):
             sync_file_thread_list.append(Thread(target=self.sync_file))
 
@@ -225,11 +288,13 @@ class Psyncd:
         # sync_file_thread.start()
         for item in sync_file_thread_list:
             item.start()
+		sync_file_delete_thread.start()
 
         watch_file_thread.join()
         # sync_file_thread.join()
         for item in sync_file_thread_list:
             item.join()
+		sync_file_delete_thread.join()
 
 
 if __name__ == '__main__':
