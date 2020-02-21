@@ -42,6 +42,8 @@ class FileEventHandler(FileSystemEventHandler):
             FileChangeList.append(file_string)
 
     def on_deleted(self, event):
+        global FileDeleteList
+        global FILEDELETELOCK
         if event.is_directory:
             file_string = "directory#deleted#{0}".format(event.src_path)
         else:
@@ -136,7 +138,11 @@ class Psyncd:
         :param root_path: /home/zkeeer/
         :return: filename
         """
-        ftype, action, filename = FileChangeList_item.split("#")
+        if "#" in FileChangeList_item:
+            ftype, action, filename = FileChangeList_item.split("#")
+        else:
+            action = "deleted"
+            filename = FileChangeList_item
         # get relative path
         if action == "moveto":
             filename = filename.replace(root_path, "./")
@@ -240,8 +246,8 @@ class Psyncd:
                 for config_item in self.module_config_list:
                     source_path = config_item.get("source", None)
                     if source_path and path_item and source_path in path_item:
-                        print("{} {}".format(time.ctime(), sync_file))
-                        self.logger("{} {}".format(time.ctime(), sync_file))
+                        print("{} {}".format(time.ctime(), path_item))
+                        self.logger("{} {}".format(time.ctime(), path_item))
                         sync_path = self.get_relative_path(path_item, source_path)
                         rsync_command = self.make_rsync_command(sync_path, config_item)
                         print("{} {}".format(time.ctime(), rsync_command))
