@@ -1,3 +1,5 @@
+# Author: ZKeeer 2020.02.26
+
 import re
 import os
 import time
@@ -7,61 +9,70 @@ from threading import Thread
 from watchdog.observers import Observer
 from watchdog.events import *
 
-FileChangeList = []
-FileDeleteList = []  #lazy delete
+FileCacheList  = []
+FILECACHELOCK  = False
 FILEDELETELOCK = False
 
+ThreadsList = []
+
 class FileEventHandler(FileSystemEventHandler):
+    """
+    preprocess file events and put to FileCacheList
+    the format after process:
+    """
     def __init__(self):
         FileSystemEventHandler.__init__(self)
 
     def on_moved(self, event):
-        global FileDeleteList
-        global FILEDELETELOCK
-        if event.is_directory:
-            file_move_src = "directory#movefrom#{}".format(event.src_path)
-            file_string = "directory#moveto#{}".format(event.dest_path)
-        else:
-            file_move_src = "file#movefrom#{}".format(event.src_path)
-            file_string = "file#moveto#{}".format(event.dest_path)
-        if file_string not in FileChangeList:
-            FileChangeList.append(file_string)
-        if file_move_src not in FileDeleteList:
-            while FILEDELETELOCK:
-                time.sleep(0.05)
-            FILEDELETELOCK = True
-            FileDeleteList.append(file_move_src)
-            FILEDELETELOCK = False
+        global FileCacheList
+        global FILECACHELOCK
+        src_path = event.src_path
+        dest_path = event.dest_path
+        # get parent path
+        path_split_list = src_path.split("/")
+        if len(path_split_list) > 2:
+            path_split_list.pop(-1)
+            tmpresult = "/".join(path_split_list) + "/"
+            src_path = tmpresult
+        while FILECACHELOCK:
+            time.sleep(0.1)
+        FileCacheList.append(src_path)
+        if src_path not in dest_path:
+            FileCacheList.append(dest_path)
 
     def on_created(self, event):
-        if event.is_directory:
-            file_string = "directory#created#{0}".format(event.src_path)
-        else:
-            file_string = "file#created#{0}".format(event.src_path)
-        if file_string not in FileChangeList:
-            FileChangeList.append(file_string)
+        global FileCacheList
+        global FILECACHELOCK
+        while FILECACHELOCK:
+            time.sleep(0.1)
+        FileCacheList.append(event.src_path)
 
     def on_deleted(self, event):
-        global FileDeleteList
-        global FILEDELETELOCK
-        if event.is_directory:
-            file_string = "directory#deleted#{0}".format(event.src_path)
-        else:
-            file_string = "file#deleted#{0}".format(event.src_path)
-        if file_string not in FileDeleteList:
-            while FILEDELETELOCK:
-                time.sleep(0.1)
-            FILEDELETELOCK = True
-            FileDeleteList.append(file_string)
-            FILEDELETELOCK = False
+        global FileCacheList
+        global FILECACHELOCK
+
+        src_path = event.src_path
+        # get parent path
+        path_split_list = src_path.split("/")
+        if len(path_split_list) > 2:
+            path_split_list.pop(-1)
+            tmpresult = "/".join(path_split_list) + "/"
+            src_path = tmpresult
+        while FILECACHELOCK:
+            time.sleep(0.1)
+        FileCacheList.append(src_path)
 
     def on_modified(self, event):
+        global FileCacheList
+        global FILECACHELOCK
+
         if event.is_directory:
-            file_string = "directory#modified#{0}".format(event.src_path)
+            pass
         else:
-            file_string = "file#modified#{0}".format(event.src_path)
-            if file_string not in FileChangeList:
-                FileChangeList.append(file_string)
+            while FILECACHELOCK:
+                time.sleep(0.1)
+            FileCacheList.append(event.src_path)
+
 
 
 class Psyncd:
@@ -72,9 +83,10 @@ class Psyncd:
         self.max_process = 5
         self.module_config_list = []
         self.changed_file_list = []
+        self.sync_file_list = []
         self.rsync_command_list = []
-        self.watch_file_sleep_time = 10
-        self.sync_file_sleep_time = 0.5
+        self.watch_file_sleep_time = 5
+        self.sync_file_sleep_time = 1
 
         self.load_config(self.config_file)
 
@@ -86,6 +98,7 @@ class Psyncd:
         with open(conf_file, "r") as fr:
             config_string = "".join(fr.readlines())
         config_string, nums = re.subn("#.*?\n", "", config_string)  # remove comments
+        print config_strings
 
         global_config_string = re.findall("\[global\]\s+([^\[]*)", config_string)[0]
         module_configs = re.findall("\[module\]\s+([^\[]*)", config_string)
@@ -98,6 +111,12 @@ class Psyncd:
                 global_config_dict.update({key.strip(): vaule.strip()})
         self.log_file = global_config_dict.get("log_file", "")
         self.max_process = int(global_config_dict.get("max_process", 5))
+        # process event delay
+        tmpeventdelay = global_config_dict.get("events_delay", "default")
+        self.events_delay = int(tmpeventdelay) if "default" != tmpeventdelay else 10 * self.max_process
+        # process time delay
+        self.time_delay = int(global_config_dict.get("time_delay"))
+
         # parser module config
         for module_item in module_configs:
             tmp_dict = {}
@@ -111,7 +130,7 @@ class Psyncd:
 
     def logger(self, log_string):
         if os.path.getsize(self.log_file) >= 100000000:
-            os.system("mv {} {}.{}".format(self.log_file, self.log_file, time.strftime('%Y%m%d', time.localtime())))
+            os.system("mv {lf} {lf}.{tmst}".format(lf=self.log_file, tmst=time.strftime('%Y%m%d', time.localtime())))
         with open(self.log_file, "a") as fa:
             fa.write("{} {}\n".format(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), log_string))
 
@@ -130,6 +149,107 @@ class Psyncd:
 
         for item in threads_list:
             item.join()
+
+    def aggregations_tree_add_node_full(self, root, filepath):
+        """
+        添加树节点:节点为绝对路径
+        root: the root of tree
+        filepath: fullpath of files, /home/zkeeer/approot/backend/test
+        """
+        tree = root
+        level = 0
+        while len(filepath) > 1:
+            level += 1
+            current_path = filepath.split('/')[1:1]
+            filepath = '/' + '/'.join(filepath.split('/')[2:])
+            current_node = tree.get(current_path, {})
+            if not current_node:
+                tree.update({current_path: {}})
+            tree.update({current_path: current_node})
+            tree = current_node
+            if len(filepath) == 1:
+                return
+
+
+    def aggregations_tree_add_node_relative(self, root, filepath):
+        # 添加树节点:节点为相对路径
+        tree = root
+        while len(filepath) > 1:
+            current_path = filepath.split('/')[1]
+            filepath = '/' + '/'.join(filepath.split('/')[2:])
+            current_node = tree.get(current_path, {})
+            if not current_node:
+                tree.update({current_path: {}})
+            tree.update({current_path: current_node})
+            tree = current_node
+            if len(filepath) == 1:
+                return
+            
+    def aggregations_screen_tree_node(self, tree, node_list, file_path):
+        # 筛选出可聚合节点：深度优先遍历树
+        for item in tree.keys():
+            if item == "COUNT":
+                continue
+            child = tree.get(item, {})
+            file_path += "/"+item
+            if child:
+                count = child.get("COUNT", 0)
+                if count >= self.max_process:
+                    node_list.append(filepath)
+                    return
+                else:
+                    self.aggregations_screen_tree_node(child, node_list, file_path)
+            else:
+                return
+
+    def aggregations(self, file_list):
+        # 聚合操作基于树，将文件结构映射为树结构
+        filetree = {}
+        agg_notes = []
+        # 0.构造文件树
+        for item in file_list:
+            aggregations_tree_add_node(filetree, item)
+        # 1.聚合，筛选出可聚合节点，聚合策略: 统计子节点数量，当子节点数量大于等于max process时，将该节点列入可聚合节点
+        filetree
+        # 2.去重，去除被包含的节点，例如/home/zkeeer和/home/zkeeer/test中，去掉/home/zkeeer/test
+        # 3.
+
+    def cache_list_handler(self):
+        global FileCacheList
+        global FILECACHELOCK
+        last_time_sync = time.time()
+        is_time_accessible = False
+        is_events_accessible = False
+        while True:
+            if (time.time() - last_time_sync) >= self.time_delay:
+                is_time_accessible = True
+            if len(FileCacheList) >= self.events_delay:
+                is_events_accessible = True
+            if (is_time_accessible and len(FileCacheList) > 0) or is_events_accessible:
+                # get files cached
+                local_file_cached_list = []
+                result_file_list = []
+                FILECACHELOCK = True
+                try:
+                    local_file_cached_list = copy.deepcopy(FileCacheList)
+                    del FileCacheList[:]
+                except BaseException as e:
+                    self.logger(e.__str__())
+                finally:
+                    FILECACHELOCK = False
+                # do some aggregations, trigger condition: length of FileCacheList > 10*max_process
+                if len(local_file_cached_list) >= 10*self.max_process:
+                    result_file_list = self.aggregations(local_file_cached_list)
+                else:
+                    result_file_list = local_file_cached_list
+                # put result into change file list
+                self.sync_file_list.extend(result_file_list)
+                # clear workspace
+                del local_file_cached_list
+                del result_file_list
+                is_time_accessible = False
+                is_events_accessible = False
+            time.sleep(1)
 
     def get_relative_path(self, FileChangeList_item, root_path):
         """
@@ -160,99 +280,42 @@ class Psyncd:
         return ""
 
     def sync_file(self):
+        """
+        sync worker
+        """
         print("start sync file")
         while True:
+            # mutex
             while self.FILE_LOCK:
                 time.sleep(self.sync_file_sleep_time)
             while not FileChangeList:
                 time.sleep(self.sync_file_sleep_time)
             self.FILE_LOCK = True
-            FileChangeList_item = FileChangeList.pop(0) if FileChangeList else False
-            self.FILE_LOCK = False
+            try:
+                FileChangeList_item = FileChangeList.pop(0) if FileChangeList else False
+            except BaseException as e:
+                self.logger(e.__str__())
+            finally:
+                self.FILE_LOCK = False
             if not FileChangeList_item:
                 continue
-            self.logger(FileChangeList_item)
-
-            for item in self.module_config_list:
-                source_path = item.get("source", None)
-                if source_path and source_path in FileChangeList_item:
-                    sync_file = self.get_relative_path(FileChangeList_item, source_path)
-                    print("{} {}".format(time.ctime(), sync_file))
-                    self.logger("{} {}".format(time.ctime(), sync_file))
-                    rsync_command = self.make_rsync_command(sync_file, item)
-                    if rsync_command not in self.rsync_command_list:
-                        self.rsync_command_list.append(rsync_command)
-                        print("{} {}".format(time.ctime(), rsync_command))
-                        self.execute_command(rsync_command)
-                        self.rsync_command_list.remove(rsync_command)
-
-    def is_syncing(self):
-        """check if is rsync process running"""
-        cm_status, cm_output = commands.getstatusoutput("ps aux|grep 'rsync'")
-        if cm_status == 0:
-            cm_output = cm_output.split('\n')
-            for item in cm_output:
-                if "grep rsync" not in item and "ps aux" not in item:
-                    return True
-        return False
-
-    def sync_file_delete(self):
-        """sync files deleted"""
-        print "start sync file(delete)"
-        global FileDeleteList
-        global FILEDELETELOCK
-
-        while True:
-            # wait for file change message
-            while not FileDeleteList:
-                time.sleep(1)
-            # wait for producter
-            while FILEDELETELOCK:
-                time.sleep(0.1)
-            # wait for sync process
-            # sync delete files after created/modified
-            while self.is_syncing():
-                time.sleep(1)
-            # let producter wait
-            FILEDELETELOCK = True
-            tmplist = copy.deepcopy(FileDeleteList)
-            del FileDeleteList[:]
-            FILEDELETELOCK = False
-            # get absolute path
-            path_list = []
-            for item in tmplist:
-                # item : directory#deleted#filename
-                # filepath : /home/zkeeer/approot/backend/test
-                self.logger(item)
-                filepath = item.split("#")[2]
-                path_split_list = filepath.split("/")
-                if len(path_split_list) > 2:
-                    path_split_list.pop(-1)
-                tmpresult = "/".join(path_split_list) + "/"
-                path_list.append(tmpresult)
-            
-            # get top path
-            path_list = list(set(path_list))
-            path_list.sort(key=lambda item: len(item))
-            rpath_list = path_list
-            rpath_list.reverse()
-            for item in path_list:
-                for item_sub in rpath_list:
-                    if item in item_sub and item != item_sub:
-                        path_list.remove(item_sub)
-                        rpath_list.remove(item_sub)
+            # end mutex
             # sync
-            for path_item in path_list:
-                for config_item in self.module_config_list:
-                    source_path = config_item.get("source", None)
-                    if source_path and path_item and source_path in path_item:
-                        print("{} {}".format(time.ctime(), path_item))
-                        self.logger("{} {}".format(time.ctime(), path_item))
-                        sync_path = self.get_relative_path(path_item, source_path)
-                        rsync_command = self.make_rsync_command(sync_path, config_item)
-                        print("{} {}".format(time.ctime(), rsync_command))
-                        self.execute_command(rsync_command)
-                    
+            self.logger(FileChangeList_item)
+            fullpath, config = FileChangeList_item
+            source_path = config.get("source", None)
+            if source_path and source_path in fullpath:
+                # get relative path
+                relative_path = fullpath.replace(source_path, "./")
+                print("{} {}".format(time.ctime(), relative_path))
+                self.logger("{} {}".format(time.ctime(), relative_path))
+                rsync_command = self.make_rsync_command(relative_path, config)
+                if rsync_command not in self.rsync_command_list:
+                    self.rsync_command_list.append(rsync_command)
+                    self.execute_command(rsync_command)
+                    self.rsync_command_list.remove(rsync_command)
+
+            time.sleep(self.sync_file_sleep_time)
 
     def make_rsync_command(self, file_path, configs: dict):
         """
@@ -297,29 +360,30 @@ class Psyncd:
         return "cd {} && {}".format(source, rsync_command)
 
     def execute_command(self, command):
-        os.system(command)
-        self.logger(command)
+        try:
+            os.system(command)
+            self.logger(command)
+        except BaseException as args:
+            self.logger(args.__str__())
 
     def main(self):
-        watch_file_thread = Thread(target=self.watch_file_change_new)
-        # sync_file_thread = Thread(target=self.sync_file)
-        sync_file_thread_list = []
-        sync_file_delete_thread = Thread(target=self.sync_file_delete)
+        global ThreadsList
+        ThreadsList.append(Thread(target=self.watch_file_change_new))
+        ThreadsList.append(Thread(target=self.cache_list_handler))
         for index in range(self.max_process):
-            sync_file_thread_list.append(Thread(target=self.sync_file))
+            ThreadsList.append(Thread(target=self.sync_file))
 
-        watch_file_thread.start()
-        # sync_file_thread.start()
-        for item in sync_file_thread_list:
+        for item in ThreadsList:
             item.start()
-        sync_file_delete_thread.start()
 
-        watch_file_thread.join()
-        # sync_file_thread.join()
-        for item in sync_file_thread_list:
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            sys.exit(0)
+
+        for item in ThreadsList:
             item.join()
-        sync_file_delete_thread.join()
-
 
 if __name__ == '__main__':
     psync = Psyncd()
