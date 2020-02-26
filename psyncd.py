@@ -1,5 +1,6 @@
+# encoding=utf8
 # Author: ZKeeer 2020.02.26
-
+import sys
 import re
 import os
 import time
@@ -11,7 +12,6 @@ from watchdog.events import *
 
 FileCacheList  = []
 FILECACHELOCK  = False
-FILEDELETELOCK = False
 
 ThreadsList = []
 
@@ -74,7 +74,6 @@ class FileEventHandler(FileSystemEventHandler):
             FileCacheList.append(event.src_path)
 
 
-
 class Psyncd:
     def __init__(self):
         self.config_file = "./Psyncd.conf"
@@ -115,7 +114,7 @@ class Psyncd:
         tmpeventdelay = global_config_dict.get("events_delay", "default")
         self.events_delay = int(tmpeventdelay) if "default" != tmpeventdelay else 10 * self.max_process
         # process time delay
-        self.time_delay = int(global_config_dict.get("time_delay"))
+        self.time_delay = int(global_config_dict.get("time_delay", 20))
 
         # parser module config
         for module_item in module_configs:
@@ -152,7 +151,7 @@ class Psyncd:
 
     def aggregations_tree_add_node_full(self, root, filepath):
         """
-        添加树节点:节点为绝对路径
+        添加树节点:节点为绝对路径:需要测试
         root: the root of tree
         filepath: fullpath of files, /home/zkeeer/approot/backend/test
         """
@@ -160,8 +159,9 @@ class Psyncd:
         level = 0
         while len(filepath) > 1:
             level += 1
-            current_path = filepath.split('/')[1:1]
-            filepath = '/' + '/'.join(filepath.split('/')[2:])
+            file_path_split = filepath.split('/')
+            current_path = '/' + '/'.join(file_path_split[1:min(level+1, len(file_path_split))])
+            #filepath = '/' + '/'.join(filepath.split('/')[2:])
             current_node = tree.get(current_path, {})
             if not current_node:
                 tree.update({current_path: {}})
@@ -170,9 +170,26 @@ class Psyncd:
             if len(filepath) == 1:
                 return
 
+    def aggregations_screen_tree_node_full(self, tree, node_list):
+        # 筛选出可聚合节点：深度优先遍历树: 需要测试
+        for cur_node in tree.keys():
+            cur_node_childs = tree.get(cur_node, {})
+            if cur_node_childs:
+                count = cur_node_childs.keys().__len__()
+                if count >= self.max_process:
+                    node_list.append(cur_node)
+                    tree.pop(cur_node)
+                    continue
+                self.aggregations_screen_tree_node_full(cur_node_childs, node_list)
+            else:
+                node_list.append(cur_node)
+                tree.pop(cur_node)
+                continue
+            return
+
 
     def aggregations_tree_add_node_relative(self, root, filepath):
-        # 添加树节点:节点为相对路径
+        # 添加树节点:节点为相对路径: 可用，暂时废弃
         tree = root
         while len(filepath) > 1:
             current_path = filepath.split('/')[1]
@@ -186,7 +203,7 @@ class Psyncd:
                 return
             
     def aggregations_screen_tree_node(self, tree, node_list, file_path):
-        # 筛选出可聚合节点：深度优先遍历树
+        # 筛选出可聚合节点：深度优先遍历树：不可用
         for item in tree.keys():
             if item == "COUNT":
                 continue
@@ -195,7 +212,7 @@ class Psyncd:
             if child:
                 count = child.get("COUNT", 0)
                 if count >= self.max_process:
-                    node_list.append(filepath)
+                    node_list.append(file_path)
                     return
                 else:
                     self.aggregations_screen_tree_node(child, node_list, file_path)
@@ -203,28 +220,51 @@ class Psyncd:
                 return
 
     def aggregations(self, file_list):
-        # 聚合操作基于树，将文件结构映射为树结构
+        """
+        # 聚合操作基于树，将文件结构映射为树结构 ： 需要测试
+        # 然后进行聚合操作
+        # 进行去重操作
+        # 返回结果
+        :param file_list:
+        :return:
+        """
         filetree = {}
         agg_notes = []
         # 0.构造文件树
         for item in file_list:
-            aggregations_tree_add_node(filetree, item)
+            self.aggregations_tree_add_node_full(filetree, item)
         # 1.聚合，筛选出可聚合节点，聚合策略: 统计子节点数量，当子节点数量大于等于max process时，将该节点列入可聚合节点
-        filetree
+        self.aggregations_screen_tree_node_full(filetree, agg_notes)
         # 2.去重，去除被包含的节点，例如/home/zkeeer和/home/zkeeer/test中，去掉/home/zkeeer/test
-        # 3.
+        agg_notes.sort(key=lambda item: len(item.split("/")))
+        r_agg_notes = copy.deepcopy(agg_notes)
+        r_agg_notes.reverse()
+        for item in agg_notes:
+            for item_sub in r_agg_notes:
+                if item in item_sub:
+                    r_agg_notes.remove(item_sub)
+                    agg_notes.remove(item_sub)
+        # 3.结果 return
+        return agg_notes
 
     def cache_list_handler(self):
+        """
+        未测试
+        :return:
+        """
         global FileCacheList
         global FILECACHELOCK
         last_time_sync = time.time()
         is_time_accessible = False
         is_events_accessible = False
         while True:
+            # time delay
             if (time.time() - last_time_sync) >= self.time_delay:
                 is_time_accessible = True
+            # events delay
             if len(FileCacheList) >= self.events_delay:
                 is_events_accessible = True
+            # check conditions
             if (is_time_accessible and len(FileCacheList) > 0) or is_events_accessible:
                 # get files cached
                 local_file_cached_list = []
@@ -243,7 +283,7 @@ class Psyncd:
                 else:
                     result_file_list = local_file_cached_list
                 # put result into change file list
-                self.sync_file_list.extend(result_file_list)
+                self.changed_file_list.extend(result_file_list)
                 # clear workspace
                 del local_file_cached_list
                 del result_file_list
@@ -251,73 +291,44 @@ class Psyncd:
                 is_events_accessible = False
             time.sleep(1)
 
-    def get_relative_path(self, FileChangeList_item, root_path):
-        """
-        just for sync_file function
-        :param FileChangeList_item:file#created#/home/zkeeer/test.txt
-        :param root_path: /home/zkeeer/
-        :return: filename
-        """
-        if "#" in FileChangeList_item:
-            ftype, action, filename = FileChangeList_item.split("#")
-        else:
-            action = "deleted"
-            filename = FileChangeList_item
-        # get relative path
-        if action == "moveto":
-            filename = filename.replace(root_path, "./")
-            return filename
-        elif action == "created":
-            filename = filename.replace(root_path, "./")
-            return filename
-        elif action == "deleted":
-            filename = filename.replace(root_path, "./")
-            filename = re.sub("/[^/]+$", "/", filename)
-            return filename
-        elif action == "modified":
-            filename = filename.replace(root_path, "./")
-            return filename
-        return ""
-
     def sync_file(self):
         """
-        sync worker
+        sync worker: 未测试
+        :return:
         """
         print("start sync file")
         while True:
             # mutex
             while self.FILE_LOCK:
                 time.sleep(self.sync_file_sleep_time)
-            while not FileChangeList:
+            while not self.changed_file_list:
                 time.sleep(self.sync_file_sleep_time)
             self.FILE_LOCK = True
+            fullpath = ""
             try:
-                FileChangeList_item = FileChangeList.pop(0) if FileChangeList else False
+                fullpath = self.changed_file_list.pop(0) if self.changed_file_list else False
             except BaseException as e:
                 self.logger(e.__str__())
             finally:
                 self.FILE_LOCK = False
-            if not FileChangeList_item:
+            if not fullpath:
                 continue
             # end mutex
             # sync
-            self.logger(FileChangeList_item)
-            fullpath, config = FileChangeList_item
-            source_path = config.get("source", None)
-            if source_path and source_path in fullpath:
-                # get relative path
-                relative_path = fullpath.replace(source_path, "./")
-                print("{} {}".format(time.ctime(), relative_path))
-                self.logger("{} {}".format(time.ctime(), relative_path))
-                rsync_command = self.make_rsync_command(relative_path, config)
-                if rsync_command not in self.rsync_command_list:
-                    self.rsync_command_list.append(rsync_command)
+            for config in self.module_config_list:
+                source_path = config.get("source", None)
+                if source_path and source_path in fullpath:
+                    # get relative path
+                    relative_path = fullpath.replace(source_path, "./")
+                    print("{} {}".format(time.ctime(), relative_path))
+                    self.logger("{} {}".format(time.ctime(), relative_path))
+                    rsync_command = self.make_rsync_command(relative_path, config)
+                    print("{} {}".format(time.ctime(), rsync_command))
                     self.execute_command(rsync_command)
-                    self.rsync_command_list.remove(rsync_command)
 
             time.sleep(self.sync_file_sleep_time)
 
-    def make_rsync_command(self, file_path, configs: dict):
+    def make_rsync_command(self, file_path, configs):
         """
         file_path: /home/zkeeer/approot/backend/test.py
         configs.source : /home/zkeeer/
@@ -367,6 +378,10 @@ class Psyncd:
             self.logger(args.__str__())
 
     def main(self):
+        """
+        未测试
+        :return:
+        """
         global ThreadsList
         ThreadsList.append(Thread(target=self.watch_file_change_new))
         ThreadsList.append(Thread(target=self.cache_list_handler))
@@ -382,8 +397,8 @@ class Psyncd:
         except KeyboardInterrupt:
             sys.exit(0)
 
-        for item in ThreadsList:
-            item.join()
+        #for item in ThreadsList:
+        #    item.join()
 
 if __name__ == '__main__':
     psync = Psyncd()
