@@ -97,7 +97,7 @@ class Psyncd:
         with open(conf_file, "r") as fr:
             config_string = "".join(fr.readlines())
         config_string, nums = re.subn("#.*?\n", "", config_string)  # remove comments
-        print config_strings
+        print config_string
 
         global_config_string = re.findall("\[global\]\s+([^\[]*)", config_string)[0]
         module_configs = re.findall("\[module\]\s+([^\[]*)", config_string)
@@ -198,7 +198,7 @@ class Psyncd:
             tree = current_node
             if len(filepath) == 1:
                 return
-            
+
     def aggregations_screen_tree_node(self, tree, node_list, file_path):
         # 筛选出可聚合节点：深度优先遍历树：不可用
         for item in tree.keys():
@@ -233,15 +233,16 @@ class Psyncd:
         # 1.聚合，筛选出可聚合节点，聚合策略: 统计子节点数量，当子节点数量大于等于max process时，将该节点列入可聚合节点
         self.aggregations_screen_tree_node_full(filetree, agg_notes)
         # 2.去重，(暂时没必要去重)去除被包含的节点，例如/home/zkeeer和/home/zkeeer/test中，去掉/home/zkeeer/test
-        #agg_notes.sort(key=lambda item: len(item.split("/")))
-        #r_agg_notes = copy.deepcopy(agg_notes)
-        #r_agg_notes.reverse()
-        #for item in agg_notes:
-        #    for item_sub in r_agg_notes:
-        #        if item in item_sub:
-        #            r_agg_notes.remove(item_sub)
-        #            agg_notes.remove(item_sub)
+        agg_notes.sort(key=lambda item: len(item.split("/")))
+        cagg_notes = copy.deepcopy(agg_notes)
+        for index in range(len(cagg_notes)):
+            for sindex in range(index+1, len(cagg_notes)):
+                if cagg_notes[index] in cagg_notes[sindex] and cagg_notes[sindex] in agg_notes:
+                    agg_notes.remove(cagg_notes[sindex])
         # 3.结果 return
+        # clean memory before return
+        del filetree
+        del cagg_notes
         return agg_notes
 
     def cache_list_handler(self):
@@ -278,7 +279,13 @@ class Psyncd:
                 if len(local_file_cached_list) >= 10*self.max_process:
                     result_file_list = self.aggregations(local_file_cached_list)
                 else:
-                    result_file_list = local_file_cached_list
+                    local_file_cached_list.sort(key=lambda item: len(item.split('/')))
+                    result_file_list = copy.deepcopy(local_file_cached_list)
+                    # 去重
+                    for index in range(len(local_file_cached_list)):
+                        for sindex in range(index+1, len(local_file_cached_list)):
+                            if local_file_cached_list[index] in local_file_cached_list[sindex] and local_file_cached_list[sindex] in result_file_list:
+                                result_file_list.remove(local_file_cached_list[sindex])
                 # put result into change file list
                 self.changed_file_list.extend(result_file_list)
                 # clear workspace
@@ -321,8 +328,12 @@ class Psyncd:
                     print("{} {}".format(time.ctime(), relative_path))
                     self.logger("{} {}".format(time.ctime(), relative_path))
                     rsync_command = self.make_rsync_command(relative_path, config)
-                    print("{} {}".format(time.ctime(), rsync_command))
-                    self.execute_command(rsync_command)
+                    # 防止多线程执行同一任务，浪费资源
+                    if rsync_command not in self.rsync_command_list:
+                        self.rsync_command_list.append(rsync_command)
+                        print("{} {}".format(time.ctime(), rsync_command))
+                        self.execute_command(rsync_command)
+                        self.rsync_command_list.remove(rsync_command)
 
             time.sleep(self.sync_file_sleep_time)
 
@@ -380,23 +391,30 @@ class Psyncd:
         未测试
         :return:
         """
-        global ThreadsList
-        ThreadsList.append(Thread(target=self.watch_file_change_new))
-        ThreadsList.append(Thread(target=self.cache_list_handler))
+        threads_list = []
+        # watchdog threads
+        for module in self.module_config_list:
+            source_path = module.get("source", None)
+            observer = Observer()
+            event_handler = FileEventHandler()
+            observer.schedule(event_handler, source_path, True)
+            threads_list.append(observer)
+        # cache file handler thread
+        threads_list.append(Thread(target=self.cache_list_handler))
+        # rsync job threads
         for index in range(self.max_process):
-            ThreadsList.append(Thread(target=self.sync_file))
-
-        for item in ThreadsList:
+            threads_list.append(Thread(target=self.sync_file))
+        # start threads
+        for item in threads_list:
             item.start()
+        for item in threads_list:
+            item.join
 
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             sys.exit(0)
-
-        #for item in ThreadsList:
-        #    item.join()
 
 if __name__ == '__main__':
     psync = Psyncd()
