@@ -7,10 +7,14 @@ import re
 import os
 import time
 import copy
-import commands
 from threading import Thread
 from watchdog.observers import Observer
 from watchdog.events import *
+try:
+    import commands
+except BaseException as args:
+    import subprocess as commands
+
 
 FileCacheList  = []
 FILECACHELOCK  = False
@@ -175,7 +179,7 @@ class Psyncd:
         :param node_list:
         :return:
         """
-        for cur_node in tree.keys():
+        for cur_node in list(tree.keys()):  #python3.6
             cur_node_childs = tree.get(cur_node, {})
             if cur_node_childs:
                 count = cur_node_childs.keys().__len__()
@@ -266,7 +270,7 @@ class Psyncd:
                     local_file_cached_list = copy.deepcopy(FileCacheList)
                     del FileCacheList[:]
                 except BaseException as e:
-                    self.logger(e.__str__())
+                    self.logger("ERROR:" + e.__str__())
                 finally:
                     FILECACHELOCK = False
                 # do some aggregations, trigger condition: length of FileCacheList > 10*max_process
@@ -278,10 +282,10 @@ class Psyncd:
                     # 去重
                     for index in range(len(local_file_cached_list)):
                         for sindex in range(index+1, len(local_file_cached_list)):
-                            if local_file_cached_list[index] in local_file_cached_list[sindex] and local_file_cached_list[sindex] in result_file_list:
+                            if local_file_cached_list[index] in local_file_cached_list[sindex] and local_file_cached_list[index] != local_file_cached_list[sindex] and local_file_cached_list[sindex] in result_file_list:
                                 result_file_list.remove(local_file_cached_list[sindex])
                 # put result into change file list
-                self.changed_file_list.extend(result_file_list)
+                self.changed_file_list.extend(copy.deepcopy(result_file_list))
                 # clear workspace
                 last_time_sync = time.time()
                 del local_file_cached_list
@@ -295,7 +299,7 @@ class Psyncd:
         sync worker: rsync工作进程，多个rsync进程对文件进行同步。
         :return:
         """
-        #print("start sync file")
+        #print "start sync file"
         while True:
             # mutex
             while self.FILE_LOCK:
@@ -307,7 +311,7 @@ class Psyncd:
             try:
                 fullpath = self.changed_file_list.pop(0) if self.changed_file_list else False
             except BaseException as e:
-                self.logger(e.__str__())
+                self.logger("ERROR:" + e.__str__())
             finally:
                 self.FILE_LOCK = False
             if not fullpath:
@@ -319,13 +323,13 @@ class Psyncd:
                 if source_path and source_path in fullpath:
                     # get relative path
                     relative_path = fullpath.replace(source_path, "./")
-                    #print("{} {}".format(time.ctime(), relative_path))
+                    #print "{} {}".format(time.ctime(), relative_path)
                     self.logger(relative_path)
                     rsync_command = self.make_rsync_command(relative_path, config)
                     # 防止多线程执行同一任务，浪费资源
                     if rsync_command not in self.rsync_command_list:
                         self.rsync_command_list.append(rsync_command)
-                        #print("{} {}".format(time.ctime(), rsync_command))
+                        #print "{} {}".format(time.ctime(), rsync_command)
                         self.execute_command(rsync_command)
                         self.rsync_command_list.remove(rsync_command)
 
@@ -384,7 +388,7 @@ class Psyncd:
             os.system(command)
             self.logger(command)
         except BaseException as args:
-            self.logger(args.__str__())
+            self.logger("ERROR:" + args.__str__())
 
     def main(self):
         """
