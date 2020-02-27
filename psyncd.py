@@ -133,22 +133,6 @@ class Psyncd:
         with open(self.log_file, "a") as fa:
             fa.write("{} {}\n".format(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), log_string))
 
-    def watch_file_change_new(self):
-        print("start watch file new")
-        threads_list = []
-        for module in self.module_config_list:
-            source_path = module.get("source", None)
-            observer = Observer()
-            event_handler = FileEventHandler()
-            observer.schedule(event_handler, source_path, True)
-            threads_list.append(observer)
-
-        for item in threads_list:
-            item.start()
-
-        for item in threads_list:
-            item.join()
-
     def aggregations_tree_add_node_full(self, root, filepath):
         """
         添加树节点:节点为绝对路径
@@ -197,23 +181,6 @@ class Psyncd:
             tree.update({current_path: current_node})
             tree = current_node
             if len(filepath) == 1:
-                return
-
-    def aggregations_screen_tree_node(self, tree, node_list, file_path):
-        # 筛选出可聚合节点：深度优先遍历树：不可用
-        for item in tree.keys():
-            if item == "COUNT":
-                continue
-            child = tree.get(item, {})
-            file_path += "/"+item
-            if child:
-                count = child.get("COUNT", 0)
-                if count >= self.max_process:
-                    node_list.append(file_path)
-                    return
-                else:
-                    self.aggregations_screen_tree_node(child, node_list, file_path)
-            else:
                 return
 
     def aggregations(self, file_list):
@@ -326,7 +293,7 @@ class Psyncd:
                     # get relative path
                     relative_path = fullpath.replace(source_path, "./")
                     print("{} {}".format(time.ctime(), relative_path))
-                    self.logger("{} {}".format(time.ctime(), relative_path))
+                    self.logger(relative_path)
                     rsync_command = self.make_rsync_command(relative_path, config)
                     # 防止多线程执行同一任务，浪费资源
                     if rsync_command not in self.rsync_command_list:
@@ -388,7 +355,6 @@ class Psyncd:
 
     def main(self):
         """
-        未测试
         :return:
         """
         threads_list = []
@@ -404,12 +370,14 @@ class Psyncd:
         # rsync job threads
         for index in range(self.max_process):
             threads_list.append(Thread(target=self.sync_file))
+        # setDaemon
+        for item in threads_list:
+            item.setDaemon(True)
         # start threads
         for item in threads_list:
             item.start()
-        for item in threads_list:
-            item.join
 
+        # kill threads by Ctrl+C
         try:
             while True:
                 time.sleep(1)
