@@ -151,27 +151,24 @@ class Psyncd:
 
     def aggregations_tree_add_node_full(self, root, filepath):
         """
-        添加树节点:节点为绝对路径:需要测试
+        添加树节点:节点为绝对路径
         root: the root of tree
         filepath: fullpath of files, /home/zkeeer/approot/backend/test
         """
         tree = root
         level = 0
-        while len(filepath) > 1:
+        while level < filepath.split('/').__len__()-1:
             level += 1
             file_path_split = filepath.split('/')
             current_path = '/' + '/'.join(file_path_split[1:min(level+1, len(file_path_split))])
-            #filepath = '/' + '/'.join(filepath.split('/')[2:])
             current_node = tree.get(current_path, {})
             if not current_node:
                 tree.update({current_path: {}})
             tree.update({current_path: current_node})
             tree = current_node
-            if len(filepath) == 1:
-                return
 
     def aggregations_screen_tree_node_full(self, tree, node_list):
-        # 筛选出可聚合节点：深度优先遍历树: 需要测试
+        # 筛选出可聚合节点：深度优先遍历树
         for cur_node in tree.keys():
             cur_node_childs = tree.get(cur_node, {})
             if cur_node_childs:
@@ -185,7 +182,7 @@ class Psyncd:
                 node_list.append(cur_node)
                 tree.pop(cur_node)
                 continue
-            return
+        return
 
 
     def aggregations_tree_add_node_relative(self, root, filepath):
@@ -221,9 +218,9 @@ class Psyncd:
 
     def aggregations(self, file_list):
         """
-        # 聚合操作基于树，将文件结构映射为树结构 ： 需要测试
+        # 聚合操作基于树，将文件结构映射为树结构
         # 然后进行聚合操作
-        # 进行去重操作
+        # 进行去重操作:暂时不用
         # 返回结果
         :param file_list:
         :return:
@@ -235,15 +232,15 @@ class Psyncd:
             self.aggregations_tree_add_node_full(filetree, item)
         # 1.聚合，筛选出可聚合节点，聚合策略: 统计子节点数量，当子节点数量大于等于max process时，将该节点列入可聚合节点
         self.aggregations_screen_tree_node_full(filetree, agg_notes)
-        # 2.去重，去除被包含的节点，例如/home/zkeeer和/home/zkeeer/test中，去掉/home/zkeeer/test
-        agg_notes.sort(key=lambda item: len(item.split("/")))
-        r_agg_notes = copy.deepcopy(agg_notes)
-        r_agg_notes.reverse()
-        for item in agg_notes:
-            for item_sub in r_agg_notes:
-                if item in item_sub:
-                    r_agg_notes.remove(item_sub)
-                    agg_notes.remove(item_sub)
+        # 2.去重，(暂时没必要去重)去除被包含的节点，例如/home/zkeeer和/home/zkeeer/test中，去掉/home/zkeeer/test
+        #agg_notes.sort(key=lambda item: len(item.split("/")))
+        #r_agg_notes = copy.deepcopy(agg_notes)
+        #r_agg_notes.reverse()
+        #for item in agg_notes:
+        #    for item_sub in r_agg_notes:
+        #        if item in item_sub:
+        #            r_agg_notes.remove(item_sub)
+        #            agg_notes.remove(item_sub)
         # 3.结果 return
         return agg_notes
 
@@ -285,6 +282,7 @@ class Psyncd:
                 # put result into change file list
                 self.changed_file_list.extend(result_file_list)
                 # clear workspace
+                last_time_sync = time.time()
                 del local_file_cached_list
                 del result_file_list
                 is_time_accessible = False
