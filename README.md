@@ -11,7 +11,7 @@ Psyncd可以同时监控百万级文件，推送十几个target。（参考目�
 
 Psyncd文件改动事件的监控依赖于watchdog（其中watchdog的依赖，可以参考watchdog项目），watchdog封装了inotify和pathtools等，是python开发的一个文件事件监控库。
 
-**Psyncd开发和测试环境位python2.7**，近期会适配python3.6+ 。
+**Psyncd开发和测试环境位python2.7**，python3.5只进行过简单测试（10G/10W+ 文件） 。
 
 #### 欢迎Pull Request
 
