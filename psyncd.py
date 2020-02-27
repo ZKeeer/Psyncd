@@ -1,5 +1,7 @@
 # encoding=utf8
 # Author: ZKeeer 2020.02.26
+# MIT License
+# Copyright © 2020 ZKeeer. All Rights Reserved.
 import sys
 import re
 import os
@@ -24,6 +26,11 @@ class FileEventHandler(FileSystemEventHandler):
         FileSystemEventHandler.__init__(self)
 
     def on_moved(self, event):
+        """
+        注册文件move事件，并对结果进行简单处理，结果放入FileCachedList
+        :param event:
+        :return:
+        """
         global FileCacheList
         global FILECACHELOCK
         src_path = event.src_path
@@ -93,11 +100,16 @@ class Psyncd:
             fa.write("")
 
     def load_config(self, conf_file):
+        """
+        从Psyncd.conf加载配置
+        :param conf_file:
+        :return:
+        """
         config_string = ""
         with open(conf_file, "r") as fr:
             config_string = "".join(fr.readlines())
         config_string, nums = re.subn("#.*?\n", "", config_string)  # remove comments
-        print config_string
+        #print config_string
 
         global_config_string = re.findall("\[global\]\s+([^\[]*)", config_string)[0]
         module_configs = re.findall("\[module\]\s+([^\[]*)", config_string)
@@ -109,12 +121,12 @@ class Psyncd:
                 key, vaule = item.split("=")
                 global_config_dict.update({key.strip(): vaule.strip()})
         self.log_file = global_config_dict.get("log_file", "")
-        self.max_process = int(global_config_dict.get("max_process", 5))
+        self.max_process = int(global_config_dict.get("max_process", 4))
         # process event delay
         tmpeventdelay = global_config_dict.get("events_delay", "default")
         self.events_delay = int(tmpeventdelay) if "default" != tmpeventdelay else 10 * self.max_process
         # process time delay
-        self.time_delay = int(global_config_dict.get("time_delay", 20))
+        self.time_delay = int(global_config_dict.get("time_delay", 60))
 
         # parser module config
         for module_item in module_configs:
@@ -128,6 +140,11 @@ class Psyncd:
         # init record file (temporary)
 
     def logger(self, log_string):
+        """
+        记录log并进行切割
+        :param log_string:
+        :return:
+        """
         if os.path.getsize(self.log_file) >= 100000000:
             os.system("mv {lf} {lf}.{tmst}".format(lf=self.log_file, tmst=time.strftime('%Y%m%d', time.localtime())))
         with open(self.log_file, "a") as fa:
@@ -152,7 +169,12 @@ class Psyncd:
             tree = current_node
 
     def aggregations_screen_tree_node_full(self, tree, node_list):
-        # 筛选出可聚合节点：深度优先遍历树
+        """
+        筛选出可聚合节点：深度优先遍历树
+        :param tree: a file tree
+        :param node_list:
+        :return:
+        """
         for cur_node in tree.keys():
             cur_node_childs = tree.get(cur_node, {})
             if cur_node_childs:
@@ -170,7 +192,12 @@ class Psyncd:
 
 
     def aggregations_tree_add_node_relative(self, root, filepath):
-        # 添加树节点:节点为相对路径: 可用，暂时废弃
+        """
+        添加树节点:节点为相对路径: 可用，暂时废弃;目前使用绝对路径
+        :param root:
+        :param filepath:
+        :return:
+        """
         tree = root
         while len(filepath) > 1:
             current_path = filepath.split('/')[1]
@@ -214,7 +241,7 @@ class Psyncd:
 
     def cache_list_handler(self):
         """
-        未测试
+        从FileCachedList获取改动的文件，进行聚合和去重
         :return:
         """
         global FileCacheList
@@ -265,10 +292,10 @@ class Psyncd:
 
     def sync_file(self):
         """
-        sync worker: 未测试
+        sync worker: rsync工作进程，多个rsync进程对文件进行同步。
         :return:
         """
-        print("start sync file")
+        #print("start sync file")
         while True:
             # mutex
             while self.FILE_LOCK:
@@ -292,13 +319,13 @@ class Psyncd:
                 if source_path and source_path in fullpath:
                     # get relative path
                     relative_path = fullpath.replace(source_path, "./")
-                    print("{} {}".format(time.ctime(), relative_path))
+                    #print("{} {}".format(time.ctime(), relative_path))
                     self.logger(relative_path)
                     rsync_command = self.make_rsync_command(relative_path, config)
                     # 防止多线程执行同一任务，浪费资源
                     if rsync_command not in self.rsync_command_list:
                         self.rsync_command_list.append(rsync_command)
-                        print("{} {}".format(time.ctime(), rsync_command))
+                        #print("{} {}".format(time.ctime(), rsync_command))
                         self.execute_command(rsync_command)
                         self.rsync_command_list.remove(rsync_command)
 
@@ -306,6 +333,7 @@ class Psyncd:
 
     def make_rsync_command(self, file_path, configs):
         """
+        构造rsync命令
         file_path: /home/zkeeer/approot/backend/test.py
         configs.source : /home/zkeeer/
         :param configs: module config dict
@@ -347,6 +375,11 @@ class Psyncd:
         return "cd {} && {}".format(source, rsync_command)
 
     def execute_command(self, command):
+        """
+        执行shell命令
+        :param command:
+        :return:
+        """
         try:
             os.system(command)
             self.logger(command)
@@ -355,6 +388,7 @@ class Psyncd:
 
     def main(self):
         """
+        Psyncd主程，注册各种工作线程
         :return:
         """
         threads_list = []
