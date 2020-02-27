@@ -1,2 +1,6 @@
 .idea
 *venv
+*.jpb
+*.png
+*.gz
+*.zip
