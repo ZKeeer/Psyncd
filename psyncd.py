@@ -235,8 +235,9 @@ class Psyncd:
         cagg_notes = copy.deepcopy(agg_notes)
         for index in range(len(cagg_notes)):
             for sindex in range(index+1, len(cagg_notes)):
-                if cagg_notes[index] in cagg_notes[sindex] and cagg_notes[sindex] in agg_notes:
-                    agg_notes.remove(cagg_notes[sindex])
+                if cagg_notes[index] in cagg_notes[sindex]:
+                    agg_notes[sindex] = None
+         agg_notes = [item for item in agg_notes if item]
         # 3.结果 return
         # clean memory before return
         del filetree
@@ -282,8 +283,9 @@ class Psyncd:
                     # 去重
                     for index in range(len(local_file_cached_list)):
                         for sindex in range(index+1, len(local_file_cached_list)):
-                            if local_file_cached_list[index] in local_file_cached_list[sindex] and local_file_cached_list[index] != local_file_cached_list[sindex] and local_file_cached_list[sindex] in result_file_list:
-                                result_file_list.remove(local_file_cached_list[sindex])
+                            if local_file_cached_list[index] in local_file_cached_list[sindex]:
+                                result_file_list[sindex] = None
+                result_file_list = [item for item in result_file_list if item]
                 # put result into change file list
                 self.changed_file_list.extend(copy.deepcopy(result_file_list))
                 # clear workspace
