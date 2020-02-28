@@ -113,7 +113,7 @@ class Psyncd:
         with open(conf_file, "r") as fr:
             config_string = "".join(fr.readlines())
         config_string, nums = re.subn("#.*?\n", "", config_string)  # remove comments
-        #print config_string
+        # print(config_string)
 
         global_config_string = re.findall("\[global\]\s+([^\[]*)", config_string)[0]
         module_configs = re.findall("\[module\]\s+([^\[]*)", config_string)
@@ -183,7 +183,8 @@ class Psyncd:
             cur_node_childs = tree.get(cur_node, {})
             if cur_node_childs:
                 count = cur_node_childs.keys().__len__()
-                if count >= self.max_process:
+                # if count >= self.max_process:
+                if count > self.max_process:
                     node_list.append(cur_node)
                     tree.pop(cur_node)
                     continue
@@ -228,8 +229,10 @@ class Psyncd:
         # 0.构造文件树
         for item in file_list:
             self.aggregations_tree_add_node_full(filetree, item)
+        # print(filetree)
         # 1.聚合，筛选出可聚合节点，聚合策略: 统计子节点数量，当子节点数量大于等于max process时，将该节点列入可聚合节点
         self.aggregations_screen_tree_node_full(filetree, agg_notes)
+        # print(agg_notes)
         # 2.去重，(暂时没必要去重)去除被包含的节点，例如/home/zkeeer和/home/zkeeer/test中，去掉/home/zkeeer/test
         agg_notes.sort(key=lambda item: len(item.split("/")))
         cagg_notes = copy.deepcopy(agg_notes)
@@ -237,7 +240,7 @@ class Psyncd:
             for sindex in range(index+1, len(cagg_notes)):
                 if cagg_notes[index] in cagg_notes[sindex]:
                     agg_notes[sindex] = None
-         agg_notes = [item for item in agg_notes if item]
+        agg_notes = [item for item in agg_notes if item]
         # 3.结果 return
         # clean memory before return
         del filetree
@@ -301,7 +304,7 @@ class Psyncd:
         sync worker: rsync工作进程，多个rsync进程对文件进行同步。
         :return:
         """
-        #print "start sync file"
+        # print("start sync file")
         while True:
             # mutex
             while self.FILE_LOCK:
@@ -325,13 +328,20 @@ class Psyncd:
                 if source_path and source_path in fullpath:
                     # get relative path
                     relative_path = fullpath.replace(source_path, "./")
-                    #print "{} {}".format(time.ctime(), relative_path)
+                    # 对文件树的处理不到位，导致下面的补丁
+                    # /home/zhangke/backup/1.txt
+                    # /home/zhangke/backup/*.txt
+                    # /home/zhangke/backup/30.txt
+                    # {'/home': {'/home/zhangke': {'/home/zhangke/backup': {'/home/zhangke/backup/': {}}}}}
+                    # ['/home/zhangke/backup/']
+                    relative_path = relative_path.replace("//", "/") # 补丁
+                    # print("{} {}".format(time.ctime(), relative_path))
                     self.logger(relative_path)
                     rsync_command = self.make_rsync_command(relative_path, config)
                     # 防止多线程执行同一任务，浪费资源
                     if rsync_command not in self.rsync_command_list:
                         self.rsync_command_list.append(rsync_command)
-                        #print "{} {}".format(time.ctime(), rsync_command)
+                        # print("{} {}".format(time.ctime(), rsync_command))
                         self.execute_command(rsync_command)
                         self.rsync_command_list.remove(rsync_command)
 
