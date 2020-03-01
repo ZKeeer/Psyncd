@@ -49,17 +49,16 @@ class FileEventHandler(FileSystemEventHandler):
             tmpresult = "/".join(path_split_list) + "/"
             src_path = tmpresult
         while FILECACHELOCK:
-            time.sleep(0.05)
+            time.sleep(0.01)
         FileCacheList.append(src_path)
         if src_path not in dest_path:
             FileCacheList.append(dest_path)
 
     def on_created(self, event):
-        print(event.src_path)
         global FileCacheList
         global FILECACHELOCK
         while FILECACHELOCK:
-            time.sleep(0.05)
+            time.sleep(0.01)
         FileCacheList.append(event.src_path)
 
     def on_deleted(self, event):
@@ -74,7 +73,7 @@ class FileEventHandler(FileSystemEventHandler):
             tmpresult = "/".join(path_split_list) + "/"
             src_path = tmpresult
         while FILECACHELOCK:
-            time.sleep(0.05)
+            time.sleep(0.01)
         FileCacheList.append(src_path)
 
     def on_modified(self, event):
@@ -85,7 +84,7 @@ class FileEventHandler(FileSystemEventHandler):
             pass
         else:
             while FILECACHELOCK:
-                time.sleep(0.05)
+                time.sleep(0.01)
             FileCacheList.append(event.src_path)
 
 
@@ -99,8 +98,6 @@ class Psyncd:
         self.changed_file_list = []
         self.sync_file_list = []
         self.rsync_command_list = []
-        self.watch_file_sleep_time = 5
-        self.sync_file_sleep_time = 1
 
         self.load_config(self.config_file)
 
@@ -117,7 +114,6 @@ class Psyncd:
         with open(conf_file, "r") as fr:
             config_string = "".join(fr.readlines())
         config_string, nums = re.subn("#.*?\n", "", config_string)  # remove comments
-        # print(config_string)
 
         global_config_string = re.findall("\[global\]\s+([^\[]*)", config_string)[0]
         module_configs = re.findall("\[module\]\s+([^\[]*)", config_string)
@@ -239,10 +235,8 @@ class Psyncd:
         agg_notes = []
         # 0.构造文件树
         self.aggregations_tree_add_node_full(filetree, file_list)
-        # print(filetree)
         # 1.聚合，筛选出可聚合节点，聚合策略: 统计子节点数量，当子节点数量大于等于max process时，将该节点列入可聚合节点
         self.aggregations_screen_tree_node_full(filetree, agg_notes)
-        # print(agg_notes)
         # 2.去重，(暂时没必要去重)去除被包含的节点，例如/home/zkeeer和/home/zkeeer/test中，去掉/home/zkeeer/test
         agg_notes.sort(key=lambda item: len(item.split("/")))
         cagg_notes = copy.deepcopy(agg_notes)
@@ -279,16 +273,18 @@ class Psyncd:
                 # get files cached
                 local_file_cached_list = []
                 result_file_list = []
-                FILECACHELOCK = True
                 try:
+                    FILECACHELOCK = True
                     local_file_cached_list = copy.deepcopy(FileCacheList)
                     del FileCacheList[:]
+                    FILECACHELOCK = False
                 except BaseException as e:
-                    self.logger("ERROR:" + e.__str__())
+                    self.logger("ERROR: Psyncd.cache_list_handler FileCacheList:" + e.__str__())
                 finally:
                     FILECACHELOCK = False
+
                 # do some aggregations, trigger condition: length of FileCacheList > 10*max_process
-                if len(local_file_cached_list) >= 10 * self.max_process:
+                if len(local_file_cached_list) >= (10 * self.max_process):
                     result_file_list = self.aggregations(local_file_cached_list)
                 else:
                     local_file_cached_list.sort(key=lambda item: len(item.split('/')))
@@ -299,56 +295,27 @@ class Psyncd:
                             if local_file_cached_list[index] in local_file_cached_list[sindex]:
                                 result_file_list[sindex] = None
                 result_file_list = [item for item in result_file_list if item]
-                # put result into change file list
-                self.changed_file_list.extend(copy.deepcopy(result_file_list))
+
+                # construct sync command and put into rsync command list
+                for fullpath in result_file_list:
+                    for config in self.module_config_list:
+                        source_path = config.get("source", None)
+                        if source_path and source_path in fullpath:
+                            # get relative path
+                            relative_path = fullpath.replace(source_path, "./")
+                            # self.logger(relative_path)
+                            rsync_command = self.make_rsync_command(relative_path, config)
+                            if rsync_command not in self.rsync_command_list:
+                                self.rsync_command_list.append(rsync_command)
+
                 # clear workspace
                 last_time_sync = time.time()
                 del local_file_cached_list
                 del result_file_list
                 is_time_accessible = False
                 is_events_accessible = False
+
             time.sleep(1)
-
-    def sync_file(self):
-        """
-        sync worker: rsync工作进程，多个rsync进程对文件进行同步。
-        :return:
-        """
-        # print("start sync file")
-        while True:
-            # mutex
-            while self.FILE_LOCK:
-                time.sleep(self.sync_file_sleep_time)
-            while not self.changed_file_list:
-                time.sleep(self.sync_file_sleep_time)
-            self.FILE_LOCK = True
-            fullpath = ""
-            try:
-                fullpath = self.changed_file_list.pop(0) if self.changed_file_list else False
-            except BaseException as e:
-                self.logger("ERROR:" + e.__str__())
-            finally:
-                self.FILE_LOCK = False
-            if not fullpath:
-                continue
-            # end mutex
-            # sync
-            for config in self.module_config_list:
-                source_path = config.get("source", None)
-                if source_path and source_path in fullpath:
-                    # get relative path
-                    relative_path = fullpath.replace(source_path, "./")
-                    # print("{} {}".format(time.ctime(), relative_path))
-                    self.logger(relative_path)
-                    rsync_command = self.make_rsync_command(relative_path, config)
-                    # 防止多线程执行同一任务，浪费资源
-                    if rsync_command not in self.rsync_command_list:
-                        self.rsync_command_list.append(rsync_command)
-                        # print("{} {}".format(time.ctime(), rsync_command))
-                        self.execute_command(rsync_command)
-                        self.rsync_command_list.remove(rsync_command)
-
-            time.sleep(self.sync_file_sleep_time)
 
     def make_rsync_command(self, file_path, configs):
         """
@@ -395,17 +362,24 @@ class Psyncd:
         )
         return "cd {} && {}".format(source, rsync_command)
 
-    def execute_command(self, command):
+    def execute_command(self):
         """
         执行shell命令
-        :param command:
         :return:
         """
-        try:
-            os.system(command)
-            self.logger(command)
-        except BaseException as args:
-            self.logger("ERROR:" + args.__str__())
+        while True:
+            sleep_time = 0.001
+            while not self.rsync_command_list:
+                time.sleep(min(sleep_time, 1))
+                sleep_time += 0.1
+            command = ""
+            try:
+                command = self.rsync_command_list.pop(0)
+                os.system(command)
+                self.logger(command)
+            except BaseException as args:
+                if command:
+                    self.logger("ERROR: Psyncd.execute_command: " + args.__str__() + command)
 
     def main(self):
         """
@@ -414,8 +388,12 @@ class Psyncd:
         """
         threads_list = []
         # watchdog threads
+        sources = []
         for module in self.module_config_list:
-            source_path = module.get("source", None)
+            tmpsource = module.get("source", None)
+            if tmpsource and tmpsource not in sources:
+                sources.append(tmpsource)
+        for source_path in sources:
             observer = Observer()
             event_handler = FileEventHandler()
             observer.schedule(event_handler, source_path, True)
@@ -424,7 +402,7 @@ class Psyncd:
         threads_list.append(Thread(target=self.cache_list_handler))
         # rsync job threads
         for index in range(self.max_process):
-            threads_list.append(Thread(target=self.sync_file))
+            threads_list.append(Thread(target=self.execute_command))
         # setDaemon
         for item in threads_list:
             item.setDaemon(True)
