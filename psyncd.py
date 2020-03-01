@@ -165,23 +165,24 @@ class Psyncd:
         with open(self.log_file, "a") as fa:
             fa.write("{} {}\n".format(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), log_string))
 
-    def aggregations_tree_add_node_full(self, root, filepath):
+    def aggregations_tree_add_node_full(self, root, filelist):
         """
         添加树节点:节点为绝对路径
         root: the root of tree
-        filepath: fullpath of files, /home/zkeeer/approot/backend/test
+        filelist: list of fullpath
+                  [/home/zkeeer/approot/backend/test, /home/zkeeer/app/test,....]
         """
-        tree = root
-        level = 0
-        while level < filepath.split('/').__len__() - 1:
-            level += 1
+        for filepath in filelist:
+            tree = root
             file_path_split = filepath.split('/')
-            current_path = '/' + '/'.join(file_path_split[1:min(level + 1, len(file_path_split))])
-            current_node = tree.get(current_path, {})
-            if not current_node:
-                tree.update({current_path: {}})
-            tree.update({current_path: current_node})
-            tree = current_node
+            file_path_depth = file_path_split.__len__()
+            for level in range(1, file_path_depth):
+                current_path = '/' + '/'.join(file_path_split[1:min(level + 1, len(file_path_split))])
+                current_node = tree.get(current_path, {})
+                if not current_node:
+                    tree.update({current_path: {}})
+                tree.update({current_path: current_node})
+                tree = current_node
 
     def aggregations_screen_tree_node_full(self, tree, node_list):
         """
@@ -237,8 +238,7 @@ class Psyncd:
         filetree = {}
         agg_notes = []
         # 0.构造文件树
-        for item in file_list:
-            self.aggregations_tree_add_node_full(filetree, item)
+        self.aggregations_tree_add_node_full(filetree, file_list)
         # print(filetree)
         # 1.聚合，筛选出可聚合节点，聚合策略: 统计子节点数量，当子节点数量大于等于max process时，将该节点列入可聚合节点
         self.aggregations_screen_tree_node_full(filetree, agg_notes)
