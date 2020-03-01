@@ -2,7 +2,7 @@
 # Author: ZKeeer 2020.02.26
 # MIT License
 # Copyright © 2020 ZKeeer. All Rights Reserved.
-# Based on the python2.7
+# Based on the python3.5+
 import sys
 import re
 import os
