@@ -10,22 +10,25 @@ import copy
 from threading import Thread
 from watchdog.observers import Observer
 from watchdog.events import *
+
 try:
     import commands
 except BaseException as args:
     import subprocess as commands
 
 
-FileCacheList  = []
-FILECACHELOCK  = False
+FileCacheList = []
+FILECACHELOCK = False
 
 ThreadsList = []
+
 
 class FileEventHandler(FileSystemEventHandler):
     """
     preprocess file events and put to FileCacheList
     the format after process:
     """
+
     def __init__(self):
         FileSystemEventHandler.__init__(self)
 
@@ -46,16 +49,17 @@ class FileEventHandler(FileSystemEventHandler):
             tmpresult = "/".join(path_split_list) + "/"
             src_path = tmpresult
         while FILECACHELOCK:
-            time.sleep(0.1)
+            time.sleep(0.05)
         FileCacheList.append(src_path)
         if src_path not in dest_path:
             FileCacheList.append(dest_path)
 
     def on_created(self, event):
+        print(event.src_path)
         global FileCacheList
         global FILECACHELOCK
         while FILECACHELOCK:
-            time.sleep(0.1)
+            time.sleep(0.05)
         FileCacheList.append(event.src_path)
 
     def on_deleted(self, event):
@@ -70,7 +74,7 @@ class FileEventHandler(FileSystemEventHandler):
             tmpresult = "/".join(path_split_list) + "/"
             src_path = tmpresult
         while FILECACHELOCK:
-            time.sleep(0.1)
+            time.sleep(0.05)
         FileCacheList.append(src_path)
 
     def on_modified(self, event):
@@ -81,7 +85,7 @@ class FileEventHandler(FileSystemEventHandler):
             pass
         else:
             while FILECACHELOCK:
-                time.sleep(0.1)
+                time.sleep(0.05)
             FileCacheList.append(event.src_path)
 
 
@@ -141,6 +145,13 @@ class Psyncd:
                     key, value = item.split("=")
                     tmp_dict.update({key.strip(): value.strip()})
             self.module_config_list.append(tmp_dict)
+        # check configuration validity
+        for module_item in self.module_config_list:
+            # check source
+            source = module_item.get("source", "")
+            if source[-1] != '/':
+                source += '/'
+                module_item.update({"source": source})
         # init record file (temporary)
 
     def logger(self, log_string):
@@ -162,10 +173,10 @@ class Psyncd:
         """
         tree = root
         level = 0
-        while level < filepath.split('/').__len__()-1:
+        while level < filepath.split('/').__len__() - 1:
             level += 1
             file_path_split = filepath.split('/')
-            current_path = '/' + '/'.join(file_path_split[1:min(level+1, len(file_path_split))])
+            current_path = '/' + '/'.join(file_path_split[1:min(level + 1, len(file_path_split))])
             current_node = tree.get(current_path, {})
             if not current_node:
                 tree.update({current_path: {}})
@@ -179,7 +190,7 @@ class Psyncd:
         :param node_list:
         :return:
         """
-        for cur_node in list(tree.keys()):  #python3.6
+        for cur_node in list(tree.keys()):  # python3.6
             cur_node_childs = tree.get(cur_node, {})
             if cur_node_childs:
                 count = cur_node_childs.keys().__len__()
@@ -194,7 +205,6 @@ class Psyncd:
                 tree.pop(cur_node)
                 continue
         return
-
 
     def aggregations_tree_add_node_relative(self, root, filepath):
         """
@@ -237,7 +247,7 @@ class Psyncd:
         agg_notes.sort(key=lambda item: len(item.split("/")))
         cagg_notes = copy.deepcopy(agg_notes)
         for index in range(len(cagg_notes)):
-            for sindex in range(index+1, len(cagg_notes)):
+            for sindex in range(index + 1, len(cagg_notes)):
                 if cagg_notes[index] in cagg_notes[sindex]:
                     agg_notes[sindex] = None
         agg_notes = [item for item in agg_notes if item]
@@ -278,14 +288,14 @@ class Psyncd:
                 finally:
                     FILECACHELOCK = False
                 # do some aggregations, trigger condition: length of FileCacheList > 10*max_process
-                if len(local_file_cached_list) >= 10*self.max_process:
+                if len(local_file_cached_list) >= 10 * self.max_process:
                     result_file_list = self.aggregations(local_file_cached_list)
                 else:
                     local_file_cached_list.sort(key=lambda item: len(item.split('/')))
                     result_file_list = copy.deepcopy(local_file_cached_list)
                     # 去重
                     for index in range(len(local_file_cached_list)):
-                        for sindex in range(index+1, len(local_file_cached_list)):
+                        for sindex in range(index + 1, len(local_file_cached_list)):
                             if local_file_cached_list[index] in local_file_cached_list[sindex]:
                                 result_file_list[sindex] = None
                 result_file_list = [item for item in result_file_list if item]
@@ -328,13 +338,6 @@ class Psyncd:
                 if source_path and source_path in fullpath:
                     # get relative path
                     relative_path = fullpath.replace(source_path, "./")
-                    # 对文件树的处理不到位，导致下面的补丁
-                    # /home/zhangke/backup/1.txt
-                    # /home/zhangke/backup/*.txt
-                    # /home/zhangke/backup/30.txt
-                    # {'/home': {'/home/zhangke': {'/home/zhangke/backup': {'/home/zhangke/backup/': {}}}}}
-                    # ['/home/zhangke/backup/']
-                    relative_path = relative_path.replace("//", "/") # 补丁
                     # print("{} {}".format(time.ctime(), relative_path))
                     self.logger(relative_path)
                     rsync_command = self.make_rsync_command(relative_path, config)
@@ -367,16 +370,17 @@ class Psyncd:
         target = configs.get("target", None)
         # default
         sync_file = file_path
-        default_params = "-azR"
+        default_params = "-aR"
         # options
         delete = "--delete" if configs.get("delete", "").lower() == "true" else ""
         partial = "--partial" if configs.get("partial", "").lower() == "true" else ""
         ignore_errors = "--ignore-errors" if configs.get("ignore_errors", "").lower() == "true" else ""
         trans_progress = "--progress" if configs.get("trans_progress", "").lower() == "true" else ""
+        compress = "--compress" if configs.get("compress", "").lower() == "true" else ""
 
         rsync_command = "{rsync_path} {default_command} " \
                         "--password-file={passwd_file} " \
-                        "{delete} {partial} {ign_err} {tra_prog} " \
+                        "{delete} {partial} {ign_err} {tra_prog} {compress}" \
                         "{source} {target}".format(
             rsync_path=rsync_binary,
             default_command=default_params,
@@ -385,6 +389,7 @@ class Psyncd:
             partial=partial,
             ign_err=ignore_errors,
             tra_prog=trans_progress,
+            compress=compress,
             source=sync_file,
             target=target
         )
@@ -433,6 +438,7 @@ class Psyncd:
                 time.sleep(1)
         except KeyboardInterrupt:
             sys.exit(0)
+
 
 if __name__ == '__main__':
     psync = Psyncd()

@@ -1,6 +1,6 @@
 .idea
 *venv
-*.jpb
+*.jpg
 *.png
 *.gz
 *.zip
