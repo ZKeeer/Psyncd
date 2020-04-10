@@ -283,7 +283,6 @@ class Psyncd:
                     self.logger("ERROR: Psyncd.cache_list_handler FileCacheList:" + e.__str__())
                 finally:
                     FILECACHELOCK = False
-
                 # do some aggregations, trigger condition: length of FileCacheList > 10*max_process
                 if len(local_file_cached_list) >= (10 * self.max_process):
                     result_file_list = self.aggregations(local_file_cached_list)
@@ -296,19 +295,19 @@ class Psyncd:
                             if local_file_cached_list[index] in local_file_cached_list[sindex]:
                                 result_file_list[sindex] = None
                 result_file_list = [item for item in result_file_list if item]
-
                 # construct sync command and put into rsync command list
                 for fullpath in result_file_list:
                     for config in self.module_config_list:
                         source_path = config.get("source", None)
+                        if source_path.endswith("/"):
+                            source_path = source_path[:-1]
                         if source_path and source_path in fullpath:
                             # get relative path
-                            relative_path = fullpath.replace(source_path, "./")
+                            relative_path = fullpath.replace(source_path, "./").replace("//", "/")
                             # self.logger(relative_path)
                             rsync_command = self.make_rsync_command(relative_path, config)
                             if rsync_command not in self.rsync_command_list:
                                 self.rsync_command_list.append(rsync_command)
-
                 # clear workspace
                 last_time_sync = time.time()
                 del local_file_cached_list
@@ -345,11 +344,12 @@ class Psyncd:
         ignore_errors = "--ignore-errors" if configs.get("ignore_errors", "").lower() == "true" else ""
         trans_progress = "--progress" if configs.get("trans_progress", "").lower() == "true" else ""
         compress = "--compress" if configs.get("compress", "").lower() == "true" else ""
+        password_file = "--password-file={}".format(password_file) if password_file else ""
 
         rsync_command = "{rsync_path} {default_command} " \
-                        "--password-file={passwd_file} " \
-                        "{delete} {partial} {ign_err} {tra_prog} {compress}" \
-                        "{source} {target}".format(
+                        "{passwd_file} " \
+                        "{delete} {partial} {ign_err} {tra_prog} {compress} " \
+                        "{source} {target} ".format(
             rsync_path=rsync_binary,
             default_command=default_params,
             passwd_file=password_file,
