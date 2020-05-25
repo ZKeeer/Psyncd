@@ -36,6 +36,7 @@ Psyncd是个小工具，文件结构并不复杂，读起来也不难，欢迎�
 #### TODO:
 - [x] 优化文件聚合逻辑和去重逻辑
 - [x] 兼容python2和python3
+- [x] 新增支持本地模式和shell模式（仅push，不支持pull）
 - [ ] 支持日志格式自定义
 - [ ] 增加rsync其他参数的支持
 - [ ] 重新封装inotify，用来替代watchdog
