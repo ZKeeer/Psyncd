@@ -301,7 +301,7 @@ class Psyncd:
                         source_path = config.get("source", None)
                         if source_path.endswith("/"):
                             source_path = source_path[:-1]
-                        if source_path and source_path in fullpath:
+                        if source_path and source_path+'/' in fullpath:
                             # get relative path
                             relative_path = fullpath.replace(source_path, "./").replace("//", "/")
                             # self.logger(relative_path)
