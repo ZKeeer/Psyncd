@@ -382,13 +382,30 @@ class Psyncd:
                 if command:
                     self.logger("ERROR: Psyncd.execute_command: " + args.__str__() + command)
 
+    def init_sync(self):
+        """
+        初始化watchdog进程之前，进行一次全量同步。
+        :return:
+        """
+        for module in self.module_config_list:
+            sync_command = self.make_rsync_command("./", module)
+            if sync_command not in self.rsync_command_list:
+                self.rsync_command_list.append(sync_command)
+
     def main(self):
         """
         Psyncd主程，注册各种工作线程
         :return:
         """
         threads_list = []
-        # watchdog threads
+        # start cache file handler thread
+        threads_list.append(Thread(target=self.cache_list_handler))
+        # start rsync job threads
+        for index in range(self.max_process):
+            threads_list.append(Thread(target=self.execute_command))
+        #  Initialize full synchronization
+        self.init_sync()
+        # start watchdog threads
         sources = []
         for module in self.module_config_list:
             tmpsource = module.get("source", None)
@@ -399,11 +416,6 @@ class Psyncd:
             event_handler = FileEventHandler()
             observer.schedule(event_handler, source_path, True)
             threads_list.append(observer)
-        # cache file handler thread
-        threads_list.append(Thread(target=self.cache_list_handler))
-        # rsync job threads
-        for index in range(self.max_process):
-            threads_list.append(Thread(target=self.execute_command))
         # setDaemon
         for item in threads_list:
             item.setDaemon(True)
