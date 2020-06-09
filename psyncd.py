@@ -389,8 +389,13 @@ class Psyncd:
         """
         for module in self.module_config_list:
             sync_command = self.make_rsync_command("./", module)
-            if sync_command not in self.rsync_command_list:
-                self.rsync_command_list.append(sync_command)
+            try:
+                os.system(sync_ommand)
+                self.logger(sync_command)
+            except BaseException as args:
+                if sync_command:
+                    self.logger("ERROR: Psyncd.execute_command: " + args.__str__() + sync_command)
+
 
     def main(self):
         """
