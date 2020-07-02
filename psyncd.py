@@ -100,10 +100,25 @@ class Psyncd:
         self.sync_file_list = []
         self.rsync_command_list = []
 
+        self.stop_flag = "force_stop"
+
         self.load_config(self.config_file)
 
         with open(self.log_file, "a") as fa:
             fa.write("")
+
+    def is_stopped(self):
+        if os.path.exists(self.stop_flag):
+            return True
+        return False
+
+    def clean_stop_flag(self):
+        if os.path.exists(self.stop_flag):
+            os.remove(self.stop_flag)
+
+    def create_stop_flag(self):
+        if not os.path.exists(self.stop_flag):
+            os.system("touch %s" % self.stop_flag)
 
     def load_config(self, conf_file):
         """
@@ -316,6 +331,8 @@ class Psyncd:
                 is_events_accessible = False
 
             time.sleep(1)
+            if self.is_stopped():
+                break
 
     def make_rsync_command(self, file_path, configs):
         """
@@ -381,6 +398,8 @@ class Psyncd:
             except BaseException as args:
                 if command:
                     self.logger("ERROR: Psyncd.execute_command: " + args.__str__() + command)
+            if self.is_stopped():
+                break
 
     def init_sync(self):
         """
@@ -402,6 +421,8 @@ class Psyncd:
         Psyncd主程，注册各种工作线程
         :return:
         """
+        if self.is_stopped():
+            self.clean_stop_flag()
         threads_list = []
         # start cache file handler thread
         threads_list.append(Thread(target=self.cache_list_handler))
@@ -432,7 +453,12 @@ class Psyncd:
         try:
             while True:
                 time.sleep(1)
-        except KeyboardInterrupt:
+                if self.is_stopped():
+                    break
+        except KeyboardInterrupt as args:
+            print "Exit Psyncd!"
+        finally:
+            self.create_stop_flag()
             sys.exit(0)
 
 
