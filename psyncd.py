@@ -272,6 +272,7 @@ class Psyncd:
         从FileCachedList获取改动的文件，进行聚合和去重
         :return:
         """
+        print "cache_list_handler thread start!"
         global FileCacheList
         global FILECACHELOCK
         last_time_sync = time.time()
@@ -332,6 +333,7 @@ class Psyncd:
 
             time.sleep(1)
             if self.is_stopped():
+                print "cache_list_handler thread exit!"
                 break
 
     def make_rsync_command(self, file_path, configs):
@@ -385,6 +387,7 @@ class Psyncd:
         执行shell命令
         :return:
         """
+        print "Start execute_command thread!"
         while True:
             sleep_time = 0.001
             while not self.rsync_command_list:
@@ -399,6 +402,7 @@ class Psyncd:
                 if command:
                     self.logger("ERROR: Psyncd.execute_command: " + args.__str__() + command)
             if self.is_stopped():
+                print "Exit execute_command thread!"
                 break
 
     def init_sync(self):
@@ -409,12 +413,11 @@ class Psyncd:
         for module in self.module_config_list:
             sync_command = self.make_rsync_command("./", module)
             try:
-                os.system(sync_ommand)
+                os.system(sync_command)
                 self.logger(sync_command)
             except BaseException as args:
                 if sync_command:
                     self.logger("ERROR: Psyncd.execute_command: " + args.__str__() + sync_command)
-
 
     def main(self):
         """
